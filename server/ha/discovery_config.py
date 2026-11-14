@@ -84,8 +84,105 @@ def detect_active_zones(data):
     return zones
 
 
+
+def _build_tflow_discovery_config(device_id, profile, prefix):
+    """Discovery en lecture seule pour le T.Flow collectif."""
+    discovery_prefix = "homeassistant"
+    device = {
+        "identifiers": [f"aldes_{device_id}"],
+        "name": "Aldes T.Flow Hygro+ 200 L collectif",
+        "manufacturer": "Aldes",
+        "model": profile.name,
+    }
+    configs = []
+    # Nettoie les anciennes entités PAC retenues si ce boîtier avait auparavant
+    # été associé au profil T.ONE AquaAIR.
+    stale_topics = [
+        "climate/aldes",
+        "water_heater/aldes_ballon",
+        "date/vacation_start",
+        "date/vacation_end",
+        "switch/vacation_enable",
+        "number/aldes_people",
+        "sensor/outdoor_temp",
+        "sensor/indoor_temp",
+        "sensor/air_mode",
+        "binary_sensor/compressor",
+        "binary_sensor/antil",
+        "sensor/dhw_level",
+        "sensor/dhw_temp_bottom",
+        "sensor/dhw_temp_top",
+        "sensor/fan_rpm",
+        "sensor/airflow_nominal",
+        "sensor/airflow_max",
+        "sensor/airflow_medium",
+        "sensor/airflow_night",
+        "sensor/airflow_full",
+        "sensor/airflow_max_co2",
+        "sensor/energy_ecs",
+        "sensor/energy_heating_c",
+        "sensor/energy_heating_h",
+    ]
+    stale_topics.extend(f"climate/aldes_zone{zone}" for zone in range(10))
+    for stale in stale_topics:
+        domain, object_id = stale.split("/", 1)
+        configs.append((f"{discovery_prefix}/{domain}/{object_id}/config", ""))
+
+    sensors = (profile.ha_discovery.get("entities", {}).get("sensors", []) or [])
+    for item in sensors:
+        key = item["key"]
+        config = {
+            "name": item["name"],
+            "unique_id": f"aldes_{device_id}_{key.lower()}",
+            "state_topic": f"{prefix}/state/sensor/{key}",
+            "device": device,
+            "availability_topic": f"{prefix}/state/available",
+            "payload_available": "online",
+            "payload_not_available": "offline",
+        }
+        if item.get("unit"):
+            config["unit_of_measurement"] = item["unit"]
+        if item.get("device_class"):
+            config["device_class"] = item["device_class"]
+        configs.append((
+            f"{discovery_prefix}/sensor/tflow_{key.lower()}/config",
+            json.dumps(config, ensure_ascii=False),
+        ))
+
+    diagnostics = [
+        ("bridge_status", "Aldes Bridge Status", f"{prefix}/health/status",
+         {"payload_on": "degraded", "payload_off": "ok", "device_class": "problem"}),
+        ("bridge_uptime", "Aldes Bridge Uptime", f"{prefix}/health/uptime",
+         {"unit_of_measurement": "s", "device_class": "duration"}),
+        ("mqtt_connected", "Aldes MQTT Connected", f"{prefix}/health/mqtt_connected",
+         {"payload_on": "true", "payload_off": "false", "device_class": "connectivity"}),
+        ("box_connected", "Aldes Box Connected", f"{prefix}/health/box_connected",
+         {"payload_on": "true", "payload_off": "false", "device_class": "connectivity"}),
+    ]
+    for suffix, name, topic, extra in diagnostics:
+        config = {
+            "name": name,
+            "unique_id": f"aldes_{device_id}_{suffix}",
+            "state_topic": topic,
+            "device": device,
+            "availability_topic": f"{prefix}/state/available",
+            "payload_available": "online",
+            "payload_not_available": "offline",
+            **extra,
+        }
+        domain = "binary_sensor" if "payload_on" in extra else "sensor"
+        configs.append((
+            f"{discovery_prefix}/{domain}/{suffix}/config",
+            json.dumps(config, ensure_ascii=False),
+        ))
+    return configs
+
+
 def build_discovery_config(device_id, profile, prefix="aldes", data=None,
                            previous_active_zones=None, zone_sensors=False):
+    if profile and profile.id == "tflow-hygro-200-collectif":
+        return _build_tflow_discovery_config(device_id, profile, prefix)
+
     configs = []
     discovery_prefix = "homeassistant"
 
